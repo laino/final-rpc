@@ -1,0 +1,15 @@
+{
+  "name": "final-rpc",
+  "version": "1.0.0",
+  "author": "laino",
+  "description": "RPC for final-pm",
+  "main": "index.js",
+  "repository": "https://github.com/laino/final-rpc",
+  "license": "MIT",
+  "private": false,
+  "dependencies": {
+    "ws": ""
+  },
+  "devDependencies": {
+  }
+}
