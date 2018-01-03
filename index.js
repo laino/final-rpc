@@ -184,24 +184,23 @@ class Server extends EventEmitter {
 
     close() {
         return new Promise((resolve, reject) => {
+            if (!this.httpServer) {
+                return resolve();
+            }
+
             this.httpServer.close((error) => {
                 if (error) {
                     return reject(error);
                 }
 
-                this.server.close((error) => {
-                    if (error) {
-                        return reject(error);
-                    }
-
-                    resolve();
-                });
+                resolve();
             });
         });
     }
 
     async listen(_url) {
         if (!this.httpServer) {
+
             throw new Error('no http server');
         }
 
@@ -228,10 +227,10 @@ class Client extends EventEmitter {
         this.pubsub = new EventEmitter();
         this.outstandingRequests = new Map();
         this.counter = 0;
-        
+
         this.openPromise = new Promise((resolve, reject) => {
             const socket = new WebSocket(host);
- 
+
             const onOpen = () => {
                 socket.removeListener('error', onError);
 
@@ -244,25 +243,25 @@ class Client extends EventEmitter {
                 this.emit('open');
 
                 resolve(this);
-            }
+            };
 
             const onError = (error) => {
                 socket.removeListener('open', onOpen);
                 reject(error);
-            }
+            };
 
             socket.once('open', onOpen);
             socket.once('error', onError);
         });
 
         this.openPromise.catch((error) => {
-            this.emit('error', error);   
+            this.emit('error', error);
         });
     }
 
     async waitOpen() {
         // Prevent 'error' event from getting thrown when there are no listeners
-        function noop(){};
+        function noop(){}
 
         this.on('error', noop);
 
@@ -283,11 +282,15 @@ class Client extends EventEmitter {
             this.outstandingRequests.set(cbID, {resolve, reject});
         });
     }
-    
+
     async close() {
         await this.openPromise;
 
-        this.socket.close();
+        return await new Promise((resolve) => {
+            this.socket.close();
+
+            this.once('close', resolve);
+        });
     }
 
     _onMessage(_data) {
