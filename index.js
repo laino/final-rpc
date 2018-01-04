@@ -355,4 +355,4 @@ function decodeMsg(data) {
     }
 }
 
-module.exports = { Server, Client };
+module.exports = { Server, Client, WebSocket };
