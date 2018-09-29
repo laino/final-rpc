@@ -24,7 +24,10 @@ class Server extends EventEmitter {
         }
 
         if (!this.server) {
-            this.server = new WebSocket.Server({ server: this.httpServer });
+            this.server = new WebSocket.Server({
+                server: this.httpServer,
+                perMessageDeflate: false
+            });
         }
 
         this._onError = this._onError.bind(this);
