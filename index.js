@@ -5,6 +5,40 @@ const util = require('util');
 const url = require('url');
 const {EventEmitter} = require('events');
 
+const HANDLING = Symbol();
+const HANDLENEXT = Symbol();
+const QUEUE = Symbol();
+
+class SerialEventEmitter extends EventEmitter {
+    constructor() {
+        super();
+        this[HANDLING] = false;
+        this[QUEUE] = [];
+    }
+
+    emit(...args) {
+        this[QUEUE].push(args);
+        this[HANDLENEXT]();
+    }
+
+    [HANDLENEXT]() {
+        if (this[HANDLING] || !this[QUEUE].length) {
+            return;
+        }
+        this[HANDLING] = true;
+        try {
+            const args = this[QUEUE].shift();
+            super.emit(...args);
+        }
+        finally {
+            setImmediate(() => {
+                this[HANDLING] = false;
+                this[HANDLENEXT]();
+            });
+        }
+    }
+}
+
 class Server extends EventEmitter {
     constructor(options) {
         super();
@@ -219,7 +253,7 @@ class Server extends EventEmitter {
     }
 }
 
-class Client extends EventEmitter {
+class Client extends SerialEventEmitter {
     constructor(host) {
         super();
 
@@ -227,51 +261,79 @@ class Client extends EventEmitter {
         this._onClose = this._onClose.bind(this);
         this._onMessage = this._onMessage.bind(this);
 
+        this.host = host;
         this.pubsub = new EventEmitter();
         this.outstandingRequests = new Map();
         this.counter = 0;
 
+        this.open();
+
         this.openPromise = new Promise((resolve, reject) => {
-            const socket = new WebSocket(host);
-
             const onOpen = () => {
-                socket.removeListener('error', onError);
-
-                socket.on('error', this._onError);
-                socket.on('close', this._onClose);
-                socket.on('message', this._onMessage);
-
-                this.socket = socket;
-
-                this.emit('open');
-
+                this.removeListener('error', onError);
                 resolve(this);
             };
 
             const onError = (error) => {
-                socket.removeListener('open', onOpen);
+                this.removeListener('open', onOpen);
                 reject(error);
             };
 
-            socket.once('open', onOpen);
-            socket.once('error', onError);
+            this.once('open', onOpen);
+            this.once('error', onError);
         });
 
-        this.openPromise.catch((error) => {
-            this.emit('error', error);
+        this.on('response', (id, error, result) => {
+            const promise = this.outstandingRequests.get(id);
+
+            if (!promise) {
+                return;
+            }
+
+            this.outstandingRequests.delete(id);
+
+            if (error) {
+                promise.resolve(result);
+            } else {
+                promise.reject(result);
+            }
+        });
+
+        this.on('publish', (...data) => {
+            this.pubsub.emit(...data);
         });
     }
 
-    async waitOpen() {
-        // Prevent 'error' event from getting thrown when there are no listeners
-        function noop(){}
+    open() {
+        if (this.openPromise) {
+            return;
+        }
 
-        this.on('error', noop);
+        const socket = new WebSocket(this.host);
 
-        this.openPromise.catch(noop).then(() => {
-            this.removeListener('error', noop);
-        });
+        const onOpen = () => {
+            socket.removeListener('error', onError);
 
+            socket.on('error', this._onError);
+            socket.on('close', this._onClose);
+            socket.on('message', this._onMessage);
+
+            this.socket = socket;
+
+            this.emit('open');
+        };
+
+        const onError = (error) => {
+            socket.removeListener('open', onOpen);
+
+            this.emit('error', error);
+        };
+
+        socket.once('open', onOpen);
+        socket.once('error', onError);
+    }
+
+    waitOpen() {
         return this.openPromise;
     }
 
@@ -306,26 +368,12 @@ class Client extends EventEmitter {
         const [type, ...data] = msg;
 
         if (type === 0 || type === 1) {
-            const promise = this.outstandingRequests.get(data[0]);
-
-            if (!promise) {
-                return;
-            }
-
-            this.outstandingRequests.delete(data[0]);
-
-            if (type === 0) {
-                promise.resolve(data[1]);
-            } else {
-                promise.reject(data[1]);
-            }
-
+            this.emit('response', data[0], type === 0, data[1]);
             return;
         }
 
         if (type === 2) {
             this.emit('publish', ...data);
-            this.pubsub.emit(...data);
             return;
         }
     }
@@ -335,11 +383,9 @@ class Client extends EventEmitter {
     }
 
     _onClose() {
-        for (const promise of this.outstandingRequests.values()) {
-            promise.reject(new Error('connection closed'));
+        for (const id of this.outstandingRequests.keys()) {
+            this.emit('response', id, true, new Error('connection closed'));
         }
-
-        this.outstandingRequests.clear();
 
         this.emit('close');
     }
