@@ -1,6 +1,6 @@
 {
   "name": "final-rpc",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "author": "laino",
   "description": "RPC for final-pm",
   "main": "index.js",
